@@ -8,7 +8,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::filter::LevelFilter;
-use glam::{Vec3, Mat4};
+use glam::{Vec3, Vec4, Mat4};
 use rand::Rng;
 use shared::{PARTICLES, TRAIL_LENGTH, Uniform};
 
@@ -113,10 +113,11 @@ async fn main() -> Result {
   let mut rng = rand::thread_rng();
   let mut particles = vec![];
   for _ in 0..PARTICLES {
-    let pos = Vec3::new(
-      rng.gen_range(-0.5..0.5),
-      rng.gen_range(-0.5..0.5),
-      rng.gen_range(-0.5..0.5),
+    let pos = Vec4::new(
+      rng.gen_range(-0.01..0.01),
+      rng.gen_range(-0.01..0.01),
+      rng.gen_range(-0.01..0.01),
+      1.0,
     );
     for _ in 0..TRAIL_LENGTH {
       particles.push(pos);
@@ -163,7 +164,7 @@ async fn main() -> Result {
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
@@ -198,7 +199,9 @@ async fn main() -> Result {
         compute_pass.set_pipeline(&compute_pipeline);
         compute_pass.set_bind_group(0, &particles_bind_group, &[]);
         compute_pass.set_bind_group(1, &uniform_bind_group, &[]);
-        compute_pass.dispatch_workgroups(PARTICLES, 1, 1);
+        for _ in 0..10 {
+          compute_pass.dispatch_workgroups(PARTICLES, 1, 1);
+        }
         drop(compute_pass);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 winit = "0.29"
-wgpu = { version = "0.19", features = ["spirv"] }
+wgpu = { version = "0.20", features = ["spirv"] }
 glam = "0.25"
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.38", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 rand = "0.8"

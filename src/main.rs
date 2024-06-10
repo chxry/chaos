@@ -1,14 +1,15 @@
 use std::{mem, slice};
 use std::time::Instant;
+use std::f32::consts::PI;
 use winit::event_loop::EventLoop;
-use winit::event::{Event, WindowEvent};
+use winit::event::{Event, WindowEvent, DeviceEvent, MouseButton, MouseScrollDelta};
 use winit::window::WindowBuilder;
 use wgpu::util::DeviceExt;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::filter::LevelFilter;
-use glam::{Vec3, Vec4, Mat4};
+use glam::{Vec2, Vec3, Vec4, Mat4};
 use rand::Rng;
 use shared::{PARTICLES, TRAIL_LENGTH, Uniform};
 
@@ -81,6 +82,7 @@ async fn main() -> Result {
     layout: Some(&pipeline_layout),
     module: &shader,
     entry_point: "compute",
+    compilation_options: wgpu::PipelineCompilationOptions::default(),
     label: None,
   });
 
@@ -90,6 +92,7 @@ async fn main() -> Result {
       module: &shader,
       entry_point: "vert",
       buffers: &[],
+      compilation_options: wgpu::PipelineCompilationOptions::default(),
     },
     fragment: Some(wgpu::FragmentState {
       module: &shader,
@@ -99,6 +102,7 @@ async fn main() -> Result {
         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::ALL,
       })],
+      compilation_options: wgpu::PipelineCompilationOptions::default(),
     }),
     primitive: wgpu::PrimitiveState {
       topology: wgpu::PrimitiveTopology::PointList,
@@ -117,7 +121,7 @@ async fn main() -> Result {
       rng.gen_range(-0.01..0.01),
       rng.gen_range(-0.01..0.01),
       rng.gen_range(-0.01..0.01),
-      1.0,
+      0.0,
     );
     for _ in 0..TRAIL_LENGTH {
       particles.push(pos);
@@ -153,7 +157,9 @@ async fn main() -> Result {
     label: None,
   });
 
+  let mut camera = Camera::new();
   let mut last_frame = Instant::now();
+
   event_loop.run(move |event, elwt| match event {
     Event::WindowEvent { event, .. } => match event {
       WindowEvent::Resized(size) => {
@@ -172,6 +178,8 @@ async fn main() -> Result {
         );
       }
       WindowEvent::RedrawRequested => {
+        let delta_time = last_frame.elapsed().as_secs_f32();
+        last_frame = Instant::now();
         let surface = surface.get_current_texture().unwrap();
         let surface_view = surface
           .texture
@@ -182,15 +190,13 @@ async fn main() -> Result {
           &uniform_buf,
           0,
           cast(&Uniform {
-            cam: Mat4::perspective_infinite_lh(
-              1.4,
+            cam: camera.get_matrix(
               surface.texture.width() as f32 / surface.texture.height() as f32,
-              0.01,
-            ) * Mat4::look_at_lh(Vec3::new(0.0, 0.0, -24.0), Vec3::ZERO, Vec3::Y),
-            delta_time: last_frame.elapsed().as_secs_f32(),
+              delta_time,
+            ),
+            delta_time,
           }),
         );
-        last_frame = Instant::now();
 
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
           timestamp_writes: None,
@@ -227,13 +233,73 @@ async fn main() -> Result {
         queue.submit([encoder.finish()]);
         surface.present();
       }
+      WindowEvent::MouseInput {
+        button: MouseButton::Left,
+        state,
+        ..
+      } => camera.dragging = state.is_pressed(),
+      WindowEvent::MouseWheel { delta, .. } => {
+        camera.zoom_vel = -match delta {
+          MouseScrollDelta::LineDelta(_, y) => y,
+          MouseScrollDelta::PixelDelta(p) => p.y as f32,
+        } * 200.0;
+      }
       WindowEvent::CloseRequested => elwt.exit(),
+      _ => {}
+    },
+    Event::DeviceEvent { event, .. } => match event {
+      DeviceEvent::MouseMotion { delta } if camera.dragging => {
+        camera.angles_vel = Vec2::new(delta.0 as _, -delta.1 as _) * 2.0;
+      }
       _ => {}
     },
     Event::AboutToWait => window.request_redraw(),
     _ => {}
   })?;
   Ok(())
+}
+
+struct Camera {
+  angles: Vec2,
+  angles_vel: Vec2,
+  zoom: f32,
+  zoom_vel: f32,
+  dragging: bool,
+}
+
+impl Camera {
+  fn new() -> Self {
+    Camera {
+      angles: Vec2::ZERO,
+      angles_vel: Vec2::ZERO,
+      zoom: 25.0,
+      zoom_vel: 0.0,
+      dragging: false,
+    }
+  }
+
+  fn get_matrix(&mut self, aspect_ratio: f32, delta_time: f32) -> Mat4 {
+    self.angles += self.angles_vel * delta_time;
+    self.angles.y = self.angles.y.clamp(-PI / 2.0 + 0.1, PI / 2.0 - 0.1);
+    self.angles_vel *= 0.9;
+    self.zoom += self.zoom_vel * delta_time;
+    self.zoom = self.zoom.max(0.0);
+    self.zoom_vel *= 0.9;
+
+    let focus = Vec3::new(0.0, 0.0, 20.0);
+    Mat4::perspective_infinite_lh(1.4, aspect_ratio, 0.01)
+      * Mat4::look_at_lh(
+        focus
+          + self.zoom
+            * Vec3::new(
+              self.angles.x.cos() * self.angles.y.cos(),
+              self.angles.y.sin(),
+              self.angles.x.sin() * self.angles.y.cos(),
+            ),
+        focus,
+        Vec3::Y,
+      )
+  }
 }
 
 fn cast_slice<T>(t: &[T]) -> &[u8] {
